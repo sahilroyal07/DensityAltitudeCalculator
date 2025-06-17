@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Density Altitude Calculator – Optimised</title>
+>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" defer></script>
+
+  <style>
+    body{
+      font-family: Arial, sans-serif;
+      margin:0;padding:20px;text-align:center;
+      background:url('hi.png') center/cover no-repeat fixed;
+    }
+    .card{
+      max-width:900px;margin:auto;padding:24px;
+      background:rgba(0,31,63,.70);color:#fff;border-radius:14px;
+      box-shadow:0 6px 16px rgba(0,0,0,.25);
+    }
+    table{margin:auto;border-spacing:8px 4px;}
+    input{
+      width:180px;padding:8px;border-radius:8px;border:1px solid #ccc;
+      text-align:center;font-weight:bold;
+    }
+    button{
+      margin:14px 6px;padding:10px 18px;border:0;border-radius:10px;
+      background:#0077b6;color:#fff;font-weight:bold;cursor:pointer;
+    }
+    button:hover{background:#005082}
+    #result{margin-top:16px;font-size:1.1rem;font-weight:bold;transition:.2s;}
+    .safe{color:#2ecc71}.caution{color:#f1c40f}.risk{color:#e74c3c}
+    canvas{margin-top:24px}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>✈️ Density Altitude Calculator</h2>
+
+    <table>
+      <tr><td>Field Elevation (ft)</td><td><input type="number" id="elev" /></td></tr>
+      <tr><td>QNH (inHg)</td>         <td><input type="number" id="qnh"  /></td></tr>
+      <tr><td>OAT (°C)</td>           <td><input type="number" id="oat"  /></td></tr>
+    </table>
+
+    <button id="calcBtn">Calculate</button>
+    <button id="pdfBtn">Export PDF</button>
+
+    <p id="result"></p>
+    <canvas id="chart" height="260"></canvas>
+  </div>
+
+  <script type="module">
+    
+    const $ = id => document.getElementById(id);
+    const el = {elev:$('elev'), qnh:$('qnh'), oat:$('oat'),
+                res:$('result'), chart:$('chart')};
+
+
+    const TH = {SAFE:5000, CAUTION:8000};
+    const LABELS = ["Pressure Alt", "ISA Temp", "Density Alt"];
+
+    
+    let chart;                 
+    let lastResult = null;     
+
+    function initChart(){
+      chart = new Chart(el.chart.getContext('2d'), {
+        type:'bar',
+        data:{
+          labels:LABELS,
+          datasets:[{label:"Values",data:[0,0,0],backgroundColor:"#2ecc71"}]
+        },
+        options:{responsive:true,animation:false}
+      });
+    }
+
+    const calc = () =>{
+      const elev = +el.elev.value,
+            qnh = +el.qnh.value,
+            oat = +el.oat.value;
+      if(Number.isNaN(elev)||Number.isNaN(qnh)||Number.isNaN(oat)) return;
+
+      const pAlt = elev + 1000*(29.92 - qnh);
+      const isaT = 15 - 2*pAlt/1000;
+      const dAlt = pAlt + 120*(oat - isaT);
+      lastResult = {elev,qnh,oat,pAlt,isaT,dAlt,ts:new Date()};
+
+      paintResult(dAlt);
+      updateChart(pAlt, isaT, dAlt);
+    };
+
+    function paintResult(dAlt){
+      let cls, text;
+      if(dAlt<TH.SAFE){ cls='safe'; text='✅ Take-off Possible (Safe)'; }
+      else if(dAlt<TH.CAUTION){ cls='caution'; text='⚠️ Caution: Longer Roll'; }
+      else{ cls='risk'; text='❌ High Risk: Reduced Performance'; }
+      el.res.className = cls;
+      el.res.textContent = text;
+    }
+
+    function updateChart(pAlt, isaT, dAlt){
+      const col = dAlt>TH.CAUTION? '#e74c3c' :
+                 dAlt>TH.SAFE   ? '#f1c40f' : '#2ecc71';
+
+      const ds = chart.data.datasets[0];
+      ds.data = [pAlt, isaT, dAlt];
+      ds.backgroundColor = col;
+      chart.update();
+    }
+
+    async function exportPDF(){
+      if(!lastResult){ alert("Please calculate first!"); return; }
+
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({orientation:"portrait",unit:"mm",format:"a4"});
+      doc.setFontSize(14);
+      doc.text("Density Altitude Report", 105, 15, {align:"center"});
+
+
+      doc.setFontSize(11);
+      const data = [
+        ["Field Elevation (ft)", lastResult.elev],
+        ["QNH (inHg)",          lastResult.qnh],
+        ["OAT (°C)",            lastResult.oat],
+        ["Pressure Altitude (ft)", lastResult.pAlt.toFixed(0)],
+        ["ISA Temperature (°C)",  lastResult.isaT.toFixed(1)],
+        ["Density Altitude (ft)", lastResult.dAlt.toFixed(0)],
+        ["Assessment",          el.res.textContent.replace(/✅|⚠️|❌/g,"").trim()],
+        ["Timestamp",           lastResult.ts.toLocaleString()]
+      ];
+      let y = 25;
+      data.forEach(r=>{
+        doc.text(`${r[0]}:  ${r[1]}`, 20, y); y+=7;
+      });
+
+      const img = el.chart.toDataURL("image/png", 1.0);
+      doc.addImage(img, "PNG", 20, y+5, 170, 80);
+
+      doc.save("DensityAltitudeReport.pdf");
+    }
+
+    const debounce = (fn,ms) => {
+      let t; return (...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms);}
+    };
+
+
+    initChart();
+
+    $('calcBtn').addEventListener('click', calc);
+
+    ['input','change'].forEach(evt=>{
+      ['elev','qnh','oat'].forEach(id=>$(id).addEventListener(evt,debounce(calc,300)));
+    });
+
+    $('pdfBtn').addEventListener('click', exportPDF);
+  </script>
+</body>
+</html>
